@@ -32,3 +32,23 @@ fn test_flexi_savings_plan() {
     assert_eq!(plan.balance, 500_000);
     assert!(!plan.is_completed);
 }
+
+fn test_lock_savings_plan() {
+    let locked_until = 2000000;
+    let plan = SavingsPlan {
+        plan_id: 2,
+        plan_type: PlanType::Lock(locked_until),
+        balance: 1_000_000,
+        start_time: 1000000,
+        last_deposit: 1000000,
+        last_withdraw: 0,
+        interest_rate: 800, // 8.00% APY
+        is_completed: false,
+    };
+    
+    assert_eq!(plan.plan_id, 2);
+    match plan.plan_type {
+        PlanType::Lock(until) => assert_eq!(until, locked_until),
+        _ => panic!("Expected Lock plan type"),
+    }
+}
