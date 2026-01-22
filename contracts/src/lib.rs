@@ -1,8 +1,12 @@
 #![no_std]
+#![allow(non_snake_case)]
 use soroban_sdk::{contract, contractimpl, Address, Env};
 
 mod storage_types;
 use storage_types::DataKey;
+
+mod storage_types;
+pub use storage_types::*;
 
 #[contract]
 pub struct NesteraContract;
