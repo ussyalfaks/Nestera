@@ -892,3 +892,437 @@ let contract_id = env.register(NesteraContract, ());
     assert!(result.is_err());
 }
 
+// =============================================================================
+// Lock Save Tests
+// =============================================================================
+
+#[test]
+fn test_create_lock_save_success() {
+    let (env, client) = setup_test_env();
+    let (_, admin_public_key) = generate_keypair(&env);
+
+    client.initialize(&admin_public_key);
+    
+    let user = Address::generate(&env);
+    env.mock_all_auths();
+    
+    // Initialize user first
+    client.initialize_user(&user);
+    
+    let amount = 1000_i128;
+    let duration = 86400u64; // 1 day
+    
+    let lock_id = client.create_lock_save(&user, &amount, &duration);
+    assert_eq!(lock_id, 1);
+    
+    // Verify the lock save was created correctly
+    let lock_save = client.get_lock_save(&lock_id);
+    assert_eq!(lock_save.id, lock_id);
+    assert_eq!(lock_save.owner, user);
+    assert_eq!(lock_save.amount, amount);
+    assert_eq!(lock_save.interest_rate, 500); // Default 5%
+    assert!(!lock_save.is_withdrawn);
+    
+    // Verify user has the lock save in their list
+    let user_locks = client.get_user_lock_saves(&user);
+    assert_eq!(user_locks.len(), 1);
+    assert_eq!(user_locks.get(0).unwrap(), lock_id);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #41)")]
+fn test_create_lock_save_invalid_amount() {
+    let (env, client) = setup_test_env();
+    let (_, admin_public_key) = generate_keypair(&env);
+
+    client.initialize(&admin_public_key);
+    
+    let user = Address::generate(&env);
+    env.mock_all_auths();
+    
+    client.initialize_user(&user);
+    
+    // Should panic with InvalidAmount error
+    client.create_lock_save(&user, &0, &86400u64);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #50)")]
+fn test_create_lock_save_invalid_duration() {
+    let (env, client) = setup_test_env();
+    let (_, admin_public_key) = generate_keypair(&env);
+
+    client.initialize(&admin_public_key);
+    
+    let user = Address::generate(&env);
+    env.mock_all_auths();
+    
+    client.initialize_user(&user);
+    
+    // Should panic with InvalidTimestamp error
+    client.create_lock_save(&user, &1000, &0);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #10)")]
+fn test_create_lock_save_user_not_found() {
+    let (env, client) = setup_test_env();
+    let (_, admin_public_key) = generate_keypair(&env);
+
+    client.initialize(&admin_public_key);
+    
+    let user = Address::generate(&env);
+    env.mock_all_auths();
+    
+    // Don't initialize user - should panic with UserNotFound
+    client.create_lock_save(&user, &1000, &86400u64);
+}
+
+#[test]
+fn test_check_matured_lock_not_matured() {
+    let (env, client) = setup_test_env();
+    let (_, admin_public_key) = generate_keypair(&env);
+
+    client.initialize(&admin_public_key);
+    
+    let user = Address::generate(&env);
+    env.mock_all_auths();
+    
+    client.initialize_user(&user);
+    
+    let lock_id = client.create_lock_save(&user, &1000, &86400u64);
+    
+    // Should not be matured immediately
+    assert!(!client.check_matured_lock(&lock_id));
+}
+
+#[test]
+fn test_check_matured_lock_matured() {
+    let (env, client) = setup_test_env();
+    let (_, admin_public_key) = generate_keypair(&env);
+
+    client.initialize(&admin_public_key);
+    
+    // Set initial timestamp
+    set_ledger_timestamp(&env, 1000);
+    
+    let user = Address::generate(&env);
+    env.mock_all_auths();
+    
+    client.initialize_user(&user);
+    
+    let lock_id = client.create_lock_save(&user, &1000, &100u64);
+    
+    // Advance time past maturity
+    set_ledger_timestamp(&env, 1200); // 1000 + 100 + buffer
+    
+    assert!(client.check_matured_lock(&lock_id));
+}
+
+#[test]
+fn test_check_matured_lock_nonexistent() {
+    let (env, client) = setup_test_env();
+    let (_, admin_public_key) = generate_keypair(&env);
+
+    client.initialize(&admin_public_key);
+    
+    // Non-existent lock should return false
+    assert!(!client.check_matured_lock(&999));
+}
+
+#[test]
+fn test_withdraw_lock_save_success() {
+    let (env, client) = setup_test_env();
+    let (_, admin_public_key) = generate_keypair(&env);
+
+    client.initialize(&admin_public_key);
+    
+    // Set initial timestamp
+    set_ledger_timestamp(&env, 1000);
+    
+    let user = Address::generate(&env);
+    env.mock_all_auths();
+    
+    client.initialize_user(&user);
+    
+    let lock_id = client.create_lock_save(&user, &1000, &100u64);
+    
+    // Advance time past maturity
+    set_ledger_timestamp(&env, 1200);
+    
+    let amount = client.withdraw_lock_save(&user, &lock_id);
+    assert!(amount >= 1000); // Should include some interest
+    
+    // Verify lock save is marked as withdrawn
+    let lock_save = client.get_lock_save(&lock_id);
+    assert!(lock_save.is_withdrawn);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #51)")]
+fn test_withdraw_lock_save_not_matured() {
+    let (env, client) = setup_test_env();
+    let (_, admin_public_key) = generate_keypair(&env);
+
+    client.initialize(&admin_public_key);
+    
+    let user = Address::generate(&env);
+    env.mock_all_auths();
+    
+    client.initialize_user(&user);
+    
+    let lock_id = client.create_lock_save(&user, &1000, &86400u64);
+    
+    // Should panic with TooEarly error
+    client.withdraw_lock_save(&user, &lock_id);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #23)")]
+fn test_withdraw_lock_save_already_withdrawn() {
+    let (env, client) = setup_test_env();
+    let (_, admin_public_key) = generate_keypair(&env);
+
+    client.initialize(&admin_public_key);
+    
+    // Set initial timestamp
+    set_ledger_timestamp(&env, 1000);
+    
+    let user = Address::generate(&env);
+    env.mock_all_auths();
+    
+    client.initialize_user(&user);
+    
+    let lock_id = client.create_lock_save(&user, &1000, &100u64);
+    
+    // Advance time past maturity
+    set_ledger_timestamp(&env, 1200);
+    
+    // First withdrawal should succeed
+    client.withdraw_lock_save(&user, &lock_id);
+    
+    // Second withdrawal should panic with PlanCompleted
+    client.withdraw_lock_save(&user, &lock_id);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #1)")]
+fn test_withdraw_lock_save_unauthorized() {
+    let (env, client) = setup_test_env();
+    let (_, admin_public_key) = generate_keypair(&env);
+
+    client.initialize(&admin_public_key);
+    
+    // Set initial timestamp
+    set_ledger_timestamp(&env, 1000);
+    
+    let user1 = Address::generate(&env);
+    let user2 = Address::generate(&env);
+    env.mock_all_auths();
+    
+    client.initialize_user(&user1);
+    client.initialize_user(&user2);
+    
+    let lock_id = client.create_lock_save(&user1, &1000, &100u64);
+    
+    // Advance time past maturity
+    set_ledger_timestamp(&env, 1200);
+    
+    // User2 trying to withdraw user1's lock save should panic with Unauthorized
+    client.withdraw_lock_save(&user2, &lock_id);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #20)")]
+fn test_withdraw_lock_save_plan_not_found() {
+    let (env, client) = setup_test_env();
+    let (_, admin_public_key) = generate_keypair(&env);
+
+    client.initialize(&admin_public_key);
+    
+    let user = Address::generate(&env);
+    env.mock_all_auths();
+    
+    client.initialize_user(&user);
+    
+    // Should panic with PlanNotFound
+    client.withdraw_lock_save(&user, &999);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #20)")]
+fn test_get_lock_save_plan_not_found() {
+    let (env, client) = setup_test_env();
+    let (_, admin_public_key) = generate_keypair(&env);
+
+    client.initialize(&admin_public_key);
+    
+    // Should panic with PlanNotFound
+    client.get_lock_save(&999);
+}
+
+#[test]
+fn test_multiple_lock_saves_unique_ids() {
+    let (env, client) = setup_test_env();
+    let (_, admin_public_key) = generate_keypair(&env);
+
+    client.initialize(&admin_public_key);
+    
+    let user = Address::generate(&env);
+    env.mock_all_auths();
+    
+    client.initialize_user(&user);
+    
+    let lock_id1 = client.create_lock_save(&user, &1000, &86400u64);
+    let lock_id2 = client.create_lock_save(&user, &2000, &172800u64);
+    
+    assert_ne!(lock_id1, lock_id2);
+    assert_eq!(lock_id1, 1);
+    assert_eq!(lock_id2, 2);
+    
+    // Verify user has both lock saves
+    let user_locks = client.get_user_lock_saves(&user);
+    assert_eq!(user_locks.len(), 2);
+    
+    let mut lock_ids = std::vec::Vec::new();
+    for i in 0..user_locks.len() {
+        lock_ids.push(user_locks.get(i).unwrap());
+    }
+    assert!(lock_ids.contains(&lock_id1));
+    assert!(lock_ids.contains(&lock_id2));
+}
+
+#[test]
+fn test_lock_save_stores_correct_times() {
+    let (env, client) = setup_test_env();
+    let (_, admin_public_key) = generate_keypair(&env);
+
+    client.initialize(&admin_public_key);
+    
+    let start_time = 1000u64;
+    let duration = 86400u64;
+    set_ledger_timestamp(&env, start_time);
+    
+    let user = Address::generate(&env);
+    env.mock_all_auths();
+    
+    client.initialize_user(&user);
+    
+    let lock_id = client.create_lock_save(&user, &1000, &duration);
+    
+    let lock_save = client.get_lock_save(&lock_id);
+    assert_eq!(lock_save.start_time, start_time);
+    assert_eq!(lock_save.maturity_time, start_time + duration);
+}
+
+#[test]
+fn test_get_user_lock_saves_empty() {
+    let (env, client) = setup_test_env();
+    let (_, admin_public_key) = generate_keypair(&env);
+
+    client.initialize(&admin_public_key);
+    
+    let user = Address::generate(&env);
+    env.mock_all_auths();
+    
+    client.initialize_user(&user);
+    
+    // User with no lock saves should return empty vector
+    let user_locks = client.get_user_lock_saves(&user);
+    assert_eq!(user_locks.len(), 0);
+}
+
+#[test]
+fn test_lock_save_balance_update() {
+    let (env, client) = setup_test_env();
+    let (_, admin_public_key) = generate_keypair(&env);
+
+    client.initialize(&admin_public_key);
+    
+    // Set initial timestamp
+    set_ledger_timestamp(&env, 1000);
+    
+    let user = Address::generate(&env);
+    env.mock_all_auths();
+    
+    client.initialize_user(&user);
+    
+    let initial_amount = 1000_i128;
+    let lock_id = client.create_lock_save(&user, &initial_amount, &(365 * 24 * 3600)); // 1 year
+    
+    // Advance time by 6 months
+    set_ledger_timestamp(&env, 1000 + (365 * 24 * 3600 / 2));
+    
+    // Verify lock is not matured yet
+    assert!(!client.check_matured_lock(&lock_id));
+    
+    // Advance time to full maturity
+    set_ledger_timestamp(&env, 1000 + (365 * 24 * 3600) + 1);
+    
+    // Now it should be matured
+    assert!(client.check_matured_lock(&lock_id));
+    
+    // Withdraw and verify interest was calculated
+    let final_amount = client.withdraw_lock_save(&user, &lock_id);
+    assert!(final_amount > initial_amount); // Should have earned interest
+}
+
+#[test]
+fn test_lock_save_wrong_plan_type() {
+    let (env, client) = setup_test_env();
+    let (_, admin_public_key) = generate_keypair(&env);
+
+    client.initialize(&admin_public_key);
+    
+    let user = Address::generate(&env);
+    env.mock_all_auths();
+    
+    client.initialize_user(&user);
+    
+    // Create a regular savings plan
+    let savings_plan_id = client.create_savings_plan(&user, &PlanType::Flexi, &1000);
+    
+    // Create a lock save
+    let lock_id = client.create_lock_save(&user, &1000, &86400u64);
+    
+    // These should be different types of plans stored separately
+    // The savings plan ID and lock save ID can be the same since they're in different storage spaces
+    
+    // Verify lock save exists and has correct data
+    let lock_save = client.get_lock_save(&lock_id);
+    assert_eq!(lock_save.id, lock_id);
+    assert_eq!(lock_save.amount, 1000);
+    
+    // Verify savings plan exists and has correct data
+    let savings_plan = client.get_savings_plan(&user, &savings_plan_id).unwrap();
+    assert_eq!(savings_plan.plan_id, savings_plan_id);
+    assert_eq!(savings_plan.balance, 1000);
+    
+    // They are different types of plans even if they have the same ID
+    // Lock saves are stored in DataKey::LockSave(id)
+    // Savings plans are stored in DataKey::SavingsPlan(user, id)
+}
+
+#[test]
+fn test_xdr_compatibility_lock_save() {
+    let env = Env::default();
+    let user = Address::generate(&env);
+    
+    let lock_save = crate::LockSave {
+        id: 1,
+        owner: user,
+        amount: 1000,
+        interest_rate: 500,
+        start_time: 1000,
+        maturity_time: 2000,
+        is_withdrawn: false,
+    };
+    
+    // Test XDR serialization/deserialization
+    let xdr_bytes = lock_save.to_xdr(&env);
+    assert!(!xdr_bytes.is_empty());
+    
+    // This verifies the struct can be serialized to XDR format
+    // which is required for Soroban storage
+}
+

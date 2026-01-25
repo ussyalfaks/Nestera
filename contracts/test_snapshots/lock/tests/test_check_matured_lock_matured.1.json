@@ -6,7 +6,6 @@
   },
   "auth": [
     [],
-    [],
     [
       [
         "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4",
@@ -42,7 +41,7 @@
                   "i128": "1000"
                 },
                 {
-                  "u64": "86400"
+                  "u64": "100"
                 }
               ]
             }
@@ -56,7 +55,7 @@
   "ledger": {
     "protocol_version": 23,
     "sequence_number": 0,
-    "timestamp": 0,
+    "timestamp": 1200,
     "network_id": "0000000000000000000000000000000000000000000000000000000000000000",
     "base_reserve": 0,
     "min_persistent_entry_ttl": 4096,
@@ -137,7 +136,7 @@
                         "symbol": "maturity_time"
                       },
                       "val": {
-                        "u64": "86400"
+                        "u64": "1100"
                       }
                     },
                     {
@@ -153,7 +152,7 @@
                         "symbol": "start_time"
                       },
                       "val": {
-                        "u64": "0"
+                        "u64": "1000"
                       }
                     }
                   ]
@@ -337,32 +336,7 @@
                     "executable": {
                       "wasm": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
                     },
-                    "storage": [
-                      {
-                        "key": {
-                          "vec": [
-                            {
-                              "symbol": "AdminPublicKey"
-                            }
-                          ]
-                        },
-                        "val": {
-                          "bytes": "79b5562e8fe654f94078b112e8a98ba7901f853ae695bed7e0e3910bad049664"
-                        }
-                      },
-                      {
-                        "key": {
-                          "vec": [
-                            {
-                              "symbol": "Initialized"
-                            }
-                          ]
-                        },
-                        "val": {
-                          "bool": true
-                        }
-                      }
-                    ]
+                    "storage": null
                   }
                 }
               }

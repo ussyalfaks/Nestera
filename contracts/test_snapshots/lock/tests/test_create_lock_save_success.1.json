@@ -6,7 +6,6 @@
   },
   "auth": [
     [],
-    [],
     [
       [
         "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4",
@@ -51,6 +50,7 @@
         }
       ]
     ],
+    [],
     []
   ],
   "ledger": {
@@ -337,32 +337,7 @@
                     "executable": {
                       "wasm": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
                     },
-                    "storage": [
-                      {
-                        "key": {
-                          "vec": [
-                            {
-                              "symbol": "AdminPublicKey"
-                            }
-                          ]
-                        },
-                        "val": {
-                          "bytes": "79b5562e8fe654f94078b112e8a98ba7901f853ae695bed7e0e3910bad049664"
-                        }
-                      },
-                      {
-                        "key": {
-                          "vec": [
-                            {
-                              "symbol": "Initialized"
-                            }
-                          ]
-                        },
-                        "val": {
-                          "bool": true
-                        }
-                      }
-                    ]
+                    "storage": null
                   }
                 }
               }

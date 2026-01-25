@@ -42,6 +42,19 @@ impl User {
     }
 }
 
+/// Represents a Lock Save plan with fixed duration and maturity
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct LockSave {
+    pub id: u64,
+    pub owner: Address,
+    pub amount: i128,
+    pub interest_rate: u32,
+    pub start_time: u64,
+    pub maturity_time: u64,
+    pub is_withdrawn: bool,
+}
+
 /// Storage keys for the contract's persistent data
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -54,6 +67,12 @@ pub enum DataKey {
     SavingsPlan(Address, u64),
     FlexiBalance(Address),
     TotalBalance(Address),
+    /// Maps lock plan ID to LockSave struct
+    LockSave(u64),
+    /// Maps user to a list of their LockSave IDs
+    UserLockSaves(Address),
+    /// Stores the next auto-incrementing LockSave ID
+    NextLockId,
 }
 
 /// Payload structure that the admin signs off-chain
