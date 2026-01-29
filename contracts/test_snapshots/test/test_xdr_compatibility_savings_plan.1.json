@@ -73,6 +73,14 @@
                             },
                             {
                               "key": {
+                                "symbol": "is_withdrawn"
+                              },
+                              "val": {
+                                "bool": false
+                              }
+                            },
+                            {
+                              "key": {
                                 "symbol": "last_deposit"
                               },
                               "val": {

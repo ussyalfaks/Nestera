@@ -339,8 +339,9 @@ rustup target add wasm32-unknown-unknown
 ## 📚 Documentation & Resources
 
 
-- **Stellar Documentation:** [developers.stellar.org]([https://developers.stellar.org](https://developers.stellar.org/docs/build/smart-contracts))
+- **Stellar Documentation:** [developers.stellar.org](https://developers.stellar.org/docs/build/smart-contracts)
 - **Soroban Docs:** [soroban.stellar.org/docs](https://soroban.stellar.org/docs)
+- **Off-Chain Oracle Architecture:** [contracts/README.md](./contracts/README.md)
 - **Soroban Examples:** [github.com/stellar/soroban-examples](https://github.com/stellar/soroban-examples)
 
 ---

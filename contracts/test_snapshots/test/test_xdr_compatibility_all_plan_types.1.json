@@ -73,6 +73,14 @@
                             },
                             {
                               "key": {
+                                "symbol": "is_withdrawn"
+                              },
+                              "val": {
+                                "bool": false
+                              }
+                            },
+                            {
+                              "key": {
                                 "symbol": "last_deposit"
                               },
                               "val": {
@@ -143,6 +151,14 @@
                             {
                               "key": {
                                 "symbol": "is_completed"
+                              },
+                              "val": {
+                                "bool": false
+                              }
+                            },
+                            {
+                              "key": {
+                                "symbol": "is_withdrawn"
                               },
                               "val": {
                                 "bool": false
@@ -230,6 +246,14 @@
                             },
                             {
                               "key": {
+                                "symbol": "is_withdrawn"
+                              },
+                              "val": {
+                                "bool": false
+                              }
+                            },
+                            {
+                              "key": {
                                 "symbol": "last_deposit"
                               },
                               "val": {
@@ -309,6 +333,14 @@
                             {
                               "key": {
                                 "symbol": "is_completed"
+                              },
+                              "val": {
+                                "bool": false
+                              }
+                            },
+                            {
+                              "key": {
+                                "symbol": "is_withdrawn"
                               },
                               "val": {
                                 "bool": false
