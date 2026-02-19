@@ -73,7 +73,9 @@ fn test_reinitialize_config_fails() {
     let treasury = Address::generate(&env);
 
     env.mock_all_auths();
-    assert!(client.try_initialize_config(&admin, &treasury, &100).is_ok());
+    assert!(client
+        .try_initialize_config(&admin, &treasury, &100)
+        .is_ok());
 
     // Second initialization should fail
     let treasury2 = Address::generate(&env);
@@ -252,9 +254,7 @@ fn test_non_admin_cannot_set_protocol_fee() {
     client.initialize_config(&admin, &treasury, &100);
 
     assert_savings_error(
-        client
-            .try_set_protocol_fee(&non_admin, &500)
-            .unwrap_err(),
+        client.try_set_protocol_fee(&non_admin, &500).unwrap_err(),
         SavingsError::Unauthorized,
     );
 }

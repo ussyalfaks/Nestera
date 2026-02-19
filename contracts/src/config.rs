@@ -79,9 +79,7 @@ pub fn initialize_config(
     }
 
     // Store config values
-    env.storage()
-        .instance()
-        .set(&DataKey::Treasury, &treasury);
+    env.storage().instance().set(&DataKey::Treasury, &treasury);
     env.storage()
         .instance()
         .set(&DataKey::ProtocolFeeBps, &protocol_fee_bps);
@@ -148,11 +146,7 @@ pub fn get_config(env: &Env) -> Result<Config, SavingsError> {
 ///
 /// # Errors
 /// * `SavingsError::Unauthorized` - If caller is not the admin
-pub fn set_treasury(
-    env: &Env,
-    admin: Address,
-    new_treasury: Address,
-) -> Result<(), SavingsError> {
+pub fn set_treasury(env: &Env, admin: Address, new_treasury: Address) -> Result<(), SavingsError> {
     require_admin(env, &admin)?;
 
     env.storage()
@@ -175,11 +169,7 @@ pub fn set_treasury(
 /// # Errors
 /// * `SavingsError::Unauthorized` - If caller is not the admin
 /// * `SavingsError::InvalidFeeBps` - If fee exceeds 10000 bps
-pub fn set_protocol_fee(
-    env: &Env,
-    admin: Address,
-    new_fee_bps: u32,
-) -> Result<(), SavingsError> {
+pub fn set_protocol_fee(env: &Env, admin: Address, new_fee_bps: u32) -> Result<(), SavingsError> {
     require_admin(env, &admin)?;
 
     if new_fee_bps > MAX_FEE_BPS {
@@ -209,8 +199,7 @@ pub fn pause_contract(env: &Env, admin: Address) -> Result<(), SavingsError> {
 
     env.storage().persistent().set(&DataKey::Paused, &true);
 
-    env.events()
-        .publish((symbol_short!("pause"),), admin);
+    env.events().publish((symbol_short!("pause"),), admin);
 
     Ok(())
 }
@@ -228,8 +217,7 @@ pub fn unpause_contract(env: &Env, admin: Address) -> Result<(), SavingsError> {
 
     env.storage().persistent().set(&DataKey::Paused, &false);
 
-    env.events()
-        .publish((symbol_short!("unpause"),), admin);
+    env.events().publish((symbol_short!("unpause"),), admin);
 
     Ok(())
 }
