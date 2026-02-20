@@ -125,6 +125,12 @@ pub enum DataKey {
     AdminPublicKey,
     /// Global pause flag for emergency control
     Paused,
+    /// Treasury address for protocol fee collection
+    Treasury,
+    /// Protocol fee in basis points (100 = 1%)
+    ProtocolFeeBps,
+    /// Flag to track config initialization
+    ConfigInitialized,
     /// Minimum allowed deposit amount
     MinimumDeposit,
     /// Fee applied on withdrawals

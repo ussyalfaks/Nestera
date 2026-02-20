@@ -117,6 +117,82 @@ pub fn execute_autosave(env: &Env, schedule_id: u64) -> Result<(), SavingsError>
     Ok(())
 }
 
+/// Batch-executes multiple AutoSave schedules that are due.
+///
+/// This function is designed to be called by an external bot or relayer to
+/// process multiple due schedules in a single contract invocation, improving
+/// efficiency and reducing per-call overhead.
+///
+/// # Arguments
+/// * `env` - The contract environment
+/// * `schedule_ids` - A vector of schedule IDs to attempt execution on
+///
+/// # Returns
+/// A `Vec<bool>` where each element corresponds to the schedule at the same
+/// index in `schedule_ids`:
+/// - `true`  — the schedule was due and executed successfully
+/// - `false` — the schedule was skipped (not found, inactive, not yet due, or deposit failed)
+///
+/// # Guarantees
+/// - One failed or skipped schedule does **not** revert the entire batch.
+/// - Only schedules whose `next_execution_time <= current_ledger_timestamp` are executed.
+/// - For each executed schedule, a Flexi deposit is performed and `next_execution_time` is
+///   advanced by `interval_seconds`.
+pub fn execute_due_autosaves(env: &Env, schedule_ids: Vec<u64>) -> Vec<bool> {
+    let current_time = env.ledger().timestamp();
+    let mut results = Vec::new(env);
+
+    for i in 0..schedule_ids.len() {
+        let schedule_id = schedule_ids.get(i).unwrap();
+
+        // Attempt to fetch the schedule; skip if not found
+        let maybe_schedule: Option<AutoSave> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::AutoSave(schedule_id));
+
+        let schedule = match maybe_schedule {
+            Some(s) => s,
+            None => {
+                results.push_back(false);
+                continue;
+            }
+        };
+
+        // Skip inactive schedules
+        if !schedule.is_active {
+            results.push_back(false);
+            continue;
+        }
+
+        // Skip schedules that are not yet due
+        if current_time < schedule.next_execution_time {
+            results.push_back(false);
+            continue;
+        }
+
+        // Attempt the Flexi deposit; if it fails, mark as false and continue
+        let deposit_result =
+            flexi::flexi_deposit(env.clone(), schedule.user.clone(), schedule.amount);
+
+        if deposit_result.is_err() {
+            results.push_back(false);
+            continue;
+        }
+
+        // Update next execution time and persist
+        let mut updated_schedule = schedule.clone();
+        updated_schedule.next_execution_time += updated_schedule.interval_seconds;
+        env.storage()
+            .persistent()
+            .set(&DataKey::AutoSave(schedule_id), &updated_schedule);
+
+        results.push_back(true);
+    }
+
+    results
+}
+
 /// Cancels an AutoSave schedule
 ///
 /// # Arguments

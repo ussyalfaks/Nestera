@@ -6,6 +6,7 @@ use soroban_sdk::{
 };
 
 mod autosave;
+mod config;
 mod errors;
 mod flexi;
 mod goal;
@@ -18,6 +19,7 @@ mod users;
 mod rates;
 mod views;
 
+pub use crate::config::Config;
 pub use crate::errors::SavingsError;
 pub use crate::storage_types::{
     AutoSave, DataKey, GoalSave, GoalSaveView, GroupSave, GroupSaveView, LockSave, LockSaveView,
@@ -45,17 +47,71 @@ pub struct NesteraContract;
 
 pub(crate) fn ensure_not_paused(env: &Env) -> Result<(), SavingsError> {
     let paused_key = DataKey::Paused;
-    let is_paused: bool = env.storage().persistent().get(&paused_key).unwrap_or(false);
 
     // Extend TTL on config check (only if the key exists)
     if env.storage().persistent().has(&paused_key) {
         ttl::extend_config_ttl(env, &paused_key);
     }
 
-    if is_paused {
-        Err(SavingsError::ContractPaused)
+    config::require_not_paused(env)
+}
+
+pub(crate) fn calculate_fee(amount: i128, fee_bps: u32) -> i128 {
+    if fee_bps == 0 {
+        0
     } else {
-        Ok(())
+        amount.checked_mul(fee_bps as i128).unwrap_or(0) / 10_000
+    }
+}
+
+#[cfg(test)]
+mod fee_tests {
+    use super::calculate_fee;
+
+    #[test]
+    fn test_calculate_fee_zero_bps() {
+        assert_eq!(calculate_fee(10_000, 0), 0);
+        assert_eq!(calculate_fee(1_000_000, 0), 0);
+    }
+
+    #[test]
+    fn test_calculate_fee_basic() {
+        // 10% of 10,000 = 1,000
+        assert_eq!(calculate_fee(10_000, 1_000), 1_000);
+        // 5% of 10,000 = 500
+        assert_eq!(calculate_fee(10_000, 500), 500);
+        // 1% of 10,000 = 100
+        assert_eq!(calculate_fee(10_000, 100), 100);
+    }
+
+    #[test]
+    fn test_calculate_fee_rounds_down() {
+        // 1.25% of 3,333 = 41.6625, should round down to 41
+        assert_eq!(calculate_fee(3_333, 125), 41);
+        // 2.5% of 4,875 = 121.875, should round down to 121
+        assert_eq!(calculate_fee(4_875, 250), 121);
+    }
+
+    #[test]
+    fn test_calculate_fee_small_amounts() {
+        // 1% of 50 = 0.5, should round down to 0
+        assert_eq!(calculate_fee(50, 100), 0);
+        // 1% of 99 = 0.99, should round down to 0
+        assert_eq!(calculate_fee(99, 100), 0);
+        // 1% of 100 = 1
+        assert_eq!(calculate_fee(100, 100), 1);
+    }
+
+    #[test]
+    fn test_calculate_fee_max_bps() {
+        // 100% of 10,000 = 10,000
+        assert_eq!(calculate_fee(10_000, 10_000), 10_000);
+    }
+
+    #[test]
+    fn test_calculate_fee_fractional_bps() {
+        // 0.01% (1 basis point) of 1,000,000 = 100
+        assert_eq!(calculate_fee(1_000_000, 1), 100);
     }
 }
 
@@ -374,6 +430,17 @@ impl NesteraContract {
         Ok(())
     }
 
+    pub fn set_protocol_fee_bps(env: Env, bps: u32) -> Result<(), SavingsError> {
+        let admin: Address = env.storage().instance().get(&DataKey::Admin).unwrap();
+        admin.require_auth();
+        if bps > 10_000 {
+            return Err(SavingsError::InvalidAmount);
+        }
+        env.storage().instance().set(&DataKey::PlatformFee, &bps);
+        env.events().publish((symbol_short!("set_pfee"),), bps);
+        Ok(())
+    }
+
     pub fn pause(env: Env, admin: Address) -> Result<(), SavingsError> {
         admin.require_auth();
         let stored_admin: Option<Address> = env.storage().instance().get(&DataKey::Admin);
@@ -456,6 +523,13 @@ impl NesteraContract {
         env.storage().instance().get(&DataKey::FeeRecipient)
     }
 
+    pub fn get_protocol_fee_bps(env: Env) -> u32 {
+        env.storage()
+            .instance()
+            .get(&DataKey::PlatformFee)
+            .unwrap_or(0)
+    }
+
     pub fn get_protocol_fee_balance(env: Env, recipient: Address) -> i128 {
         env.storage()
             .persistent()
@@ -473,16 +547,25 @@ impl NesteraContract {
         interval_seconds: u64,
         start_time: u64,
     ) -> Result<u64, SavingsError> {
+        ensure_not_paused(&env)?;
         autosave::create_autosave(&env, user, amount, interval_seconds, start_time)
     }
 
     /// Executes an AutoSave schedule if it's due
     pub fn execute_autosave(env: Env, schedule_id: u64) -> Result<(), SavingsError> {
+        ensure_not_paused(&env)?;
         autosave::execute_autosave(&env, schedule_id)
+    }
+
+    /// Batch-executes multiple due AutoSave schedules in a single call.
+    /// Returns a Vec<bool> indicating success (true) or skip/failure (false) per schedule.
+    pub fn execute_due_autosaves(env: Env, schedule_ids: Vec<u64>) -> Vec<bool> {
+        autosave::execute_due_autosaves(&env, schedule_ids)
     }
 
     /// Cancels an AutoSave schedule
     pub fn cancel_autosave(env: Env, user: Address, schedule_id: u64) -> Result<(), SavingsError> {
+        ensure_not_paused(&env)?;
         autosave::cancel_autosave(&env, user, schedule_id)
     }
 
@@ -495,10 +578,57 @@ impl NesteraContract {
     pub fn get_user_autosaves(env: Env, user: Address) -> Vec<u64> {
         autosave::get_user_autosaves(&env, &user)
     }
+
+    // ========== Config Functions ==========
+
+    /// Initializes the protocol configuration. Can only be called once.
+    pub fn initialize_config(
+        env: Env,
+        admin: Address,
+        treasury: Address,
+        protocol_fee_bps: u32,
+    ) -> Result<(), SavingsError> {
+        config::initialize_config(&env, admin, treasury, protocol_fee_bps)
+    }
+
+    /// Returns the current global configuration
+    pub fn get_config(env: Env) -> Result<Config, SavingsError> {
+        config::get_config(&env)
+    }
+
+    /// Updates the treasury address (admin only)
+    pub fn set_treasury(
+        env: Env,
+        admin: Address,
+        new_treasury: Address,
+    ) -> Result<(), SavingsError> {
+        config::set_treasury(&env, admin, new_treasury)
+    }
+
+    /// Updates the protocol fee in basis points (admin only)
+    pub fn set_protocol_fee(
+        env: Env,
+        admin: Address,
+        new_fee_bps: u32,
+    ) -> Result<(), SavingsError> {
+        config::set_protocol_fee(&env, admin, new_fee_bps)
+    }
+
+    /// Pauses the contract via config module (admin only)
+    pub fn pause_contract(env: Env, admin: Address) -> Result<(), SavingsError> {
+        config::pause_contract(&env, admin)
+    }
+
+    /// Unpauses the contract via config module (admin only)
+    pub fn unpause_contract(env: Env, admin: Address) -> Result<(), SavingsError> {
+        config::unpause_contract(&env, admin)
+    }
 }
 
 #[cfg(test)]
 mod admin_tests;
+#[cfg(test)]
+mod config_tests;
 #[cfg(test)]
 mod rates_test;
 #[cfg(test)]

@@ -171,4 +171,183 @@ mod autosave_tests {
         }));
         assert!(result.is_err()); // Should panic with InvalidPlanConfig
     }
+
+    // ========== Batch Execution Tests ==========
+
+    #[test]
+    fn test_batch_execute_multiple_due_schedules() {
+        let (env, client, user) = setup_test_contract();
+
+        let start_time = env.ledger().timestamp(); // immediately due
+
+        // Create three due schedules
+        let id1 = client.create_autosave(&user, &500, &86400, &start_time);
+        let id2 = client.create_autosave(&user, &300, &86400, &start_time);
+        let id3 = client.create_autosave(&user, &200, &86400, &start_time);
+
+        let schedule_ids = soroban_sdk::vec![&env, id1, id2, id3];
+        let results = client.execute_due_autosaves(&schedule_ids);
+
+        // All should succeed
+        assert_eq!(results.len(), 3);
+        assert_eq!(results.get(0).unwrap(), true);
+        assert_eq!(results.get(1).unwrap(), true);
+        assert_eq!(results.get(2).unwrap(), true);
+
+        // Verify total Flexi balance = 500 + 300 + 200 = 1000
+        let balance = client.get_flexi_balance(&user);
+        assert_eq!(balance, 1000);
+    }
+
+    #[test]
+    fn test_batch_execute_not_due_schedules_skipped() {
+        let (env, client, user) = setup_test_contract();
+
+        let future_time = env.ledger().timestamp() + 100_000; // far in the future
+
+        let id1 = client.create_autosave(&user, &1000, &86400, &future_time);
+        let id2 = client.create_autosave(&user, &2000, &86400, &future_time);
+
+        let schedule_ids = soroban_sdk::vec![&env, id1, id2];
+        let results = client.execute_due_autosaves(&schedule_ids);
+
+        // Both should be skipped (not due)
+        assert_eq!(results.len(), 2);
+        assert_eq!(results.get(0).unwrap(), false);
+        assert_eq!(results.get(1).unwrap(), false);
+
+        // Balance should remain 0
+        let balance = client.get_flexi_balance(&user);
+        assert_eq!(balance, 0);
+    }
+
+    #[test]
+    fn test_batch_execute_invalid_ids_handled_safely() {
+        let (env, client, _user) = setup_test_contract();
+
+        // Use IDs that don't exist
+        let schedule_ids = soroban_sdk::vec![&env, 999u64, 888u64, 777u64];
+        let results = client.execute_due_autosaves(&schedule_ids);
+
+        // All should be false (not found)
+        assert_eq!(results.len(), 3);
+        assert_eq!(results.get(0).unwrap(), false);
+        assert_eq!(results.get(1).unwrap(), false);
+        assert_eq!(results.get(2).unwrap(), false);
+    }
+
+    #[test]
+    fn test_batch_execute_inactive_schedules_skipped() {
+        let (env, client, user) = setup_test_contract();
+
+        let start_time = env.ledger().timestamp();
+
+        let id1 = client.create_autosave(&user, &1000, &86400, &start_time);
+        let id2 = client.create_autosave(&user, &2000, &86400, &start_time);
+
+        // Cancel id1 (makes it inactive)
+        client.cancel_autosave(&user, &id1);
+
+        let schedule_ids = soroban_sdk::vec![&env, id1, id2];
+        let results = client.execute_due_autosaves(&schedule_ids);
+
+        // id1 should be false (inactive), id2 should be true (due and active)
+        assert_eq!(results.len(), 2);
+        assert_eq!(results.get(0).unwrap(), false);
+        assert_eq!(results.get(1).unwrap(), true);
+
+        // Only id2's 2000 should have been deposited
+        let balance = client.get_flexi_balance(&user);
+        assert_eq!(balance, 2000);
+    }
+
+    #[test]
+    fn test_batch_execute_partial_success() {
+        let (env, client, user) = setup_test_contract();
+
+        let start_time = env.ledger().timestamp();
+        let future_time = env.ledger().timestamp() + 100_000;
+
+        // id1: due and active -> should succeed
+        let id1 = client.create_autosave(&user, &500, &86400, &start_time);
+        // id2: not due -> should be skipped
+        let id2 = client.create_autosave(&user, &300, &86400, &future_time);
+        // id3: due and active -> should succeed
+        let id3 = client.create_autosave(&user, &200, &86400, &start_time);
+        // id4: cancelled -> should be skipped
+        let id4 = client.create_autosave(&user, &1000, &86400, &start_time);
+        client.cancel_autosave(&user, &id4);
+
+        // Also include a non-existent ID
+        let fake_id: u64 = 999;
+
+        let schedule_ids = soroban_sdk::vec![&env, id1, id2, id3, id4, fake_id];
+        let results = client.execute_due_autosaves(&schedule_ids);
+
+        assert_eq!(results.len(), 5);
+        assert_eq!(results.get(0).unwrap(), true); // id1: due, active -> executed
+        assert_eq!(results.get(1).unwrap(), false); // id2: not due -> skipped
+        assert_eq!(results.get(2).unwrap(), true); // id3: due, active -> executed
+        assert_eq!(results.get(3).unwrap(), false); // id4: inactive -> skipped
+        assert_eq!(results.get(4).unwrap(), false); // fake_id: not found -> skipped
+
+        // Only id1 (500) and id3 (200) executed -> balance = 700
+        let balance = client.get_flexi_balance(&user);
+        assert_eq!(balance, 700);
+    }
+
+    #[test]
+    fn test_batch_execute_updates_next_execution_time() {
+        let (env, client, user) = setup_test_contract();
+
+        let start_time = env.ledger().timestamp();
+        let interval = 86400u64;
+
+        let id1 = client.create_autosave(&user, &1000, &interval, &start_time);
+
+        let schedule_ids = soroban_sdk::vec![&env, id1];
+        let results = client.execute_due_autosaves(&schedule_ids);
+
+        assert_eq!(results.get(0).unwrap(), true);
+
+        // Verify next_execution_time was advanced
+        let schedule = client.get_autosave(&id1).unwrap();
+        assert_eq!(schedule.next_execution_time, start_time + interval);
+    }
+
+    #[test]
+    fn test_batch_execute_empty_list() {
+        let (env, client, _user) = setup_test_contract();
+
+        let schedule_ids: soroban_sdk::Vec<u64> = soroban_sdk::vec![&env];
+        let results = client.execute_due_autosaves(&schedule_ids);
+
+        // Should return empty results
+        assert_eq!(results.len(), 0);
+    }
+
+    #[test]
+    fn test_batch_execute_flexi_balances_correct_multi_user() {
+        let (env, client, user1) = setup_test_contract();
+
+        let user2 = Address::generate(&env);
+        client.initialize_user(&user2);
+
+        let start_time = env.ledger().timestamp();
+
+        // user1 schedules
+        let id1 = client.create_autosave(&user1, &500, &86400, &start_time);
+        // user2 schedules
+        let id2 = client.create_autosave(&user2, &800, &86400, &start_time);
+
+        let schedule_ids = soroban_sdk::vec![&env, id1, id2];
+        let results = client.execute_due_autosaves(&schedule_ids);
+
+        assert_eq!(results.get(0).unwrap(), true);
+        assert_eq!(results.get(1).unwrap(), true);
+
+        // Verify per-user Flexi balances
+        assert_eq!(client.get_flexi_balance(&user1), 500);
+        assert_eq!(client.get_flexi_balance(&user2), 800);
+    }
 }

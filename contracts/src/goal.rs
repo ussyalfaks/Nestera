@@ -1,5 +1,6 @@
 use soroban_sdk::{symbol_short, Address, Env, Vec};
 
+use crate::calculate_fee;
 use crate::ensure_not_paused;
 use crate::errors::SavingsError;
 use crate::storage_types::{DataKey, GoalSave, User};
@@ -28,6 +29,18 @@ pub fn create_goal_save(
         return Err(SavingsError::UserNotFound);
     }
 
+    // Calculate protocol fee on initial deposit
+    let fee_bps: u32 = env
+        .storage()
+        .instance()
+        .get(&DataKey::PlatformFee)
+        .unwrap_or(0);
+
+    let fee_amount = calculate_fee(initial_deposit, fee_bps);
+    let net_initial_deposit = initial_deposit
+        .checked_sub(fee_amount)
+        .ok_or(SavingsError::Underflow)?;
+
     let current_time = env.ledger().timestamp();
     let goal_id = get_next_goal_id(env);
 
@@ -36,16 +49,40 @@ pub fn create_goal_save(
         owner: user.clone(),
         goal_name: goal_name.clone(),
         target_amount,
-        current_amount: initial_deposit,
+        current_amount: net_initial_deposit,
         interest_rate: 500,
         start_time: current_time,
-        is_completed: initial_deposit >= target_amount,
+        is_completed: net_initial_deposit >= target_amount,
         is_withdrawn: false,
     };
 
     env.storage()
         .persistent()
         .set(&DataKey::GoalSave(goal_id), &goal_save);
+
+    // Transfer fee to treasury if fee > 0
+    if fee_amount > 0 {
+        if let Some(fee_recipient) = env
+            .storage()
+            .instance()
+            .get::<DataKey, Address>(&DataKey::FeeRecipient)
+        {
+            let fee_key = DataKey::TotalBalance(fee_recipient.clone());
+            let current_fee_balance = env
+                .storage()
+                .persistent()
+                .get::<DataKey, i128>(&fee_key)
+                .unwrap_or(0i128);
+            let new_fee_balance = current_fee_balance
+                .checked_add(fee_amount)
+                .ok_or(SavingsError::Overflow)?;
+            env.storage().persistent().set(&fee_key, &new_fee_balance);
+            env.events().publish(
+                (symbol_short!("gdep_fee"), fee_recipient, goal_id),
+                fee_amount,
+            );
+        }
+    }
 
     add_goal_to_user(env, &user, goal_id);
     increment_next_goal_id(env);
@@ -80,9 +117,21 @@ pub fn deposit_to_goal_save(
         return Err(SavingsError::PlanCompleted);
     }
 
+    // Calculate protocol fee
+    let fee_bps: u32 = env
+        .storage()
+        .instance()
+        .get(&DataKey::PlatformFee)
+        .unwrap_or(0);
+
+    let fee_amount = calculate_fee(amount, fee_bps);
+    let net_amount = amount
+        .checked_sub(fee_amount)
+        .ok_or(SavingsError::Underflow)?;
+
     goal_save.current_amount = goal_save
         .current_amount
-        .checked_add(amount)
+        .checked_add(net_amount)
         .ok_or(SavingsError::Overflow)?;
 
     if goal_save.current_amount >= goal_save.target_amount {
@@ -96,6 +145,30 @@ pub fn deposit_to_goal_save(
     // Extend TTL on deposit
     ttl::extend_goal_ttl(env, goal_id);
     ttl::extend_user_ttl(env, &user);
+
+    // Transfer fee to treasury if fee > 0
+    if fee_amount > 0 {
+        if let Some(fee_recipient) = env
+            .storage()
+            .instance()
+            .get::<DataKey, Address>(&DataKey::FeeRecipient)
+        {
+            let fee_key = DataKey::TotalBalance(fee_recipient.clone());
+            let current_fee_balance = env
+                .storage()
+                .persistent()
+                .get::<DataKey, i128>(&fee_key)
+                .unwrap_or(0i128);
+            let new_fee_balance = current_fee_balance
+                .checked_add(fee_amount)
+                .ok_or(SavingsError::Overflow)?;
+            env.storage().persistent().set(&fee_key, &new_fee_balance);
+            env.events().publish(
+                (symbol_short!("gdep_fee"), fee_recipient, goal_id),
+                fee_amount,
+            );
+        }
+    }
 
     Ok(())
 }
@@ -126,6 +199,19 @@ pub fn withdraw_completed_goal_save(
         return Err(SavingsError::PlanCompleted);
     }
 
+    // Calculate protocol fee on withdrawal
+    let fee_bps: u32 = env
+        .storage()
+        .instance()
+        .get(&DataKey::PlatformFee)
+        .unwrap_or(0);
+
+    let fee_amount = calculate_fee(goal_save.current_amount, fee_bps);
+    let net_amount = goal_save
+        .current_amount
+        .checked_sub(fee_amount)
+        .ok_or(SavingsError::Underflow)?;
+
     goal_save.is_withdrawn = true;
 
     env.storage()
@@ -136,7 +222,7 @@ pub fn withdraw_completed_goal_save(
     if let Some(mut user_data) = env.storage().persistent().get::<DataKey, User>(&user_key) {
         user_data.total_balance = user_data
             .total_balance
-            .checked_add(goal_save.current_amount)
+            .checked_add(net_amount)
             .ok_or(SavingsError::Overflow)?;
         env.storage().persistent().set(&user_key, &user_data);
     }
@@ -145,7 +231,31 @@ pub fn withdraw_completed_goal_save(
     ttl::extend_goal_ttl(env, goal_id);
     ttl::extend_user_ttl(env, &user);
 
-    Ok(goal_save.current_amount)
+    // Transfer fee to treasury if fee > 0
+    if fee_amount > 0 {
+        if let Some(fee_recipient) = env
+            .storage()
+            .instance()
+            .get::<DataKey, Address>(&DataKey::FeeRecipient)
+        {
+            let fee_key = DataKey::TotalBalance(fee_recipient.clone());
+            let current_fee_balance = env
+                .storage()
+                .persistent()
+                .get::<DataKey, i128>(&fee_key)
+                .unwrap_or(0i128);
+            let new_fee_balance = current_fee_balance
+                .checked_add(fee_amount)
+                .ok_or(SavingsError::Overflow)?;
+            env.storage().persistent().set(&fee_key, &new_fee_balance);
+            env.events().publish(
+                (symbol_short!("gwth_fee"), fee_recipient, goal_id),
+                fee_amount,
+            );
+        }
+    }
+
+    Ok(net_amount)
 }
 
 pub fn break_goal_save(env: &Env, user: Address, goal_id: u64) -> Result<i128, SavingsError> {
@@ -622,5 +732,153 @@ mod tests {
         let initial = 1000i128;
 
         client.create_goal_save(&user, &goal_name, &target, &initial);
+    }
+
+    #[test]
+    fn test_goal_create_with_protocol_fee() {
+        let (env, client, _admin) = setup_admin_env();
+        let user = Address::generate(&env);
+        let treasury = Address::generate(&env);
+
+        env.mock_all_auths();
+        client.initialize_user(&user);
+        assert!(client.try_set_fee_recipient(&treasury).is_ok());
+        assert!(client.try_set_protocol_fee_bps(&500).is_ok()); // 5%
+
+        let goal_name = Symbol::new(&env, "vacation");
+        let target = 10_000i128;
+        let initial = 5_000i128;
+
+        let goal_id = client.create_goal_save(&user, &goal_name, &target, &initial);
+
+        let goal_save = client.get_goal_save_detail(&goal_id);
+        // Net = 5,000 - 250 = 4,750
+        assert_eq!(goal_save.current_amount, 4_750);
+        assert_eq!(client.get_protocol_fee_balance(&treasury), 250);
+    }
+
+    #[test]
+    fn test_goal_deposit_with_protocol_fee() {
+        let (env, client, _admin) = setup_admin_env();
+        let user = Address::generate(&env);
+        let treasury = Address::generate(&env);
+
+        env.mock_all_auths();
+        client.initialize_user(&user);
+        assert!(client.try_set_fee_recipient(&treasury).is_ok());
+        assert!(client.try_set_protocol_fee_bps(&300).is_ok()); // 3%
+
+        let goal_name = Symbol::new(&env, "house");
+        let target = 10_000i128;
+        let initial = 2_000i128;
+
+        let goal_id = client.create_goal_save(&user, &goal_name, &target, &initial);
+        // Initial: 2,000 - 60 = 1,940
+        assert_eq!(client.get_protocol_fee_balance(&treasury), 60);
+
+        client.deposit_to_goal_save(&user, &goal_id, &3_000);
+        // Deposit: 3,000 - 90 = 2,910
+        // Total in goal: 1,940 + 2,910 = 4,850
+        // Total fees: 60 + 90 = 150
+
+        let goal_save = client.get_goal_save_detail(&goal_id);
+        assert_eq!(goal_save.current_amount, 4_850);
+        assert_eq!(client.get_protocol_fee_balance(&treasury), 150);
+    }
+
+    #[test]
+    fn test_goal_withdraw_with_protocol_fee() {
+        let (env, client, _admin) = setup_admin_env();
+        let user = Address::generate(&env);
+        let treasury = Address::generate(&env);
+
+        env.mock_all_auths();
+        client.initialize_user(&user);
+        assert!(client.try_set_fee_recipient(&treasury).is_ok());
+        assert!(client.try_set_protocol_fee_bps(&250).is_ok()); // 2.5%
+
+        let goal_name = Symbol::new(&env, "laptop");
+        let target = 4_000i128;
+        let initial = 5_000i128;
+
+        let goal_id = client.create_goal_save(&user, &goal_name, &target, &initial);
+        // Initial: 5,000 - 125 = 4,875 (exceeds target of 4,000, so completed)
+        let goal_save = client.get_goal_save_detail(&goal_id);
+        assert_eq!(goal_save.current_amount, 4_875);
+        assert!(goal_save.is_completed);
+        assert_eq!(client.get_protocol_fee_balance(&treasury), 125);
+
+        let amount = client.withdraw_completed_goal_save(&user, &goal_id);
+        // Withdrawal: 4,875 - 121 = 4,754 (fee rounded down)
+        assert_eq!(amount, 4_754);
+        // Total fees: 125 + 121 = 246
+        assert_eq!(client.get_protocol_fee_balance(&treasury), 246);
+    }
+
+    #[test]
+    fn test_goal_zero_protocol_fee() {
+        let (env, client) = setup_test_env();
+        let user = Address::generate(&env);
+
+        env.mock_all_auths();
+        client.initialize_user(&user);
+
+        let goal_name = Symbol::new(&env, "car");
+        let target = 5_000i128;
+        let initial = 5_000i128;
+
+        let goal_id = client.create_goal_save(&user, &goal_name, &target, &initial);
+        let goal_save = client.get_goal_save_detail(&goal_id);
+        assert_eq!(goal_save.current_amount, 5_000);
+        assert!(goal_save.is_completed);
+
+        let amount = client.withdraw_completed_goal_save(&user, &goal_id);
+        assert_eq!(amount, 5_000);
+    }
+
+    #[test]
+    fn test_goal_fee_calculation_correctness() {
+        let (env, client, _admin) = setup_admin_env();
+        let user = Address::generate(&env);
+        let treasury = Address::generate(&env);
+
+        env.mock_all_auths();
+        client.initialize_user(&user);
+        assert!(client.try_set_fee_recipient(&treasury).is_ok());
+        assert!(client.try_set_protocol_fee_bps(&1000).is_ok()); // 10%
+
+        let goal_name = Symbol::new(&env, "test");
+        let target = 10_000i128;
+        let initial = 1_000i128;
+
+        let goal_id = client.create_goal_save(&user, &goal_name, &target, &initial);
+        // Fee = 1,000 * 10% = 100
+        // Net = 900
+        let goal_save = client.get_goal_save_detail(&goal_id);
+        assert_eq!(goal_save.current_amount, 900);
+        assert_eq!(client.get_protocol_fee_balance(&treasury), 100);
+    }
+
+    #[test]
+    fn test_goal_small_amount_fee_edge_case() {
+        let (env, client, _admin) = setup_admin_env();
+        let user = Address::generate(&env);
+        let treasury = Address::generate(&env);
+
+        env.mock_all_auths();
+        client.initialize_user(&user);
+        assert!(client.try_set_fee_recipient(&treasury).is_ok());
+        assert!(client.try_set_protocol_fee_bps(&100).is_ok()); // 1%
+
+        let goal_name = Symbol::new(&env, "small");
+        let target = 1_000i128;
+        let initial = 50i128;
+
+        let goal_id = client.create_goal_save(&user, &goal_name, &target, &initial);
+        // Fee = floor(50 * 100 / 10000) = 0
+        // Net = 50
+        let goal_save = client.get_goal_save_detail(&goal_id);
+        assert_eq!(goal_save.current_amount, 50);
+        assert_eq!(client.get_protocol_fee_balance(&treasury), 0);
     }
 }

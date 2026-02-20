@@ -199,6 +199,16 @@ pub enum SavingsError {
     ///
     /// This prevents state transitions that would break core assumptions.
     InvariantViolation = 89,
+
+    /// Returned when a fee in basis points exceeds the maximum allowed (10000).
+    ///
+    /// Basis points range from 0 to 10000 (0% to 100%).
+    InvalidFeeBps = 90,
+
+    /// Returned when attempting to initialize config that is already configured.
+    ///
+    /// Config initialization can only happen once.
+    ConfigAlreadyInitialized = 91,
 }
 
 #[cfg(test)]
@@ -242,6 +252,8 @@ mod tests {
             SavingsError::UnsupportedAsset as u32,
             SavingsError::InvalidSignature as u32,
             SavingsError::InvariantViolation as u32,
+            SavingsError::InvalidFeeBps as u32,
+            SavingsError::ConfigAlreadyInitialized as u32,
         ];
 
         let mut sorted = errors.clone();
